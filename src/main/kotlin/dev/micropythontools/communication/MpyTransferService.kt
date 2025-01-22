@@ -34,12 +34,10 @@ import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.project.modules
 import com.intellij.openapi.project.rootManager
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.vfs.VfsUtil
-import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.findOrCreateDirectory
-import com.intellij.openapi.vfs.findOrCreateFile
+import com.intellij.openapi.vfs.*
 import com.intellij.project.stateStore
 import com.jetbrains.python.sdk.PythonSdkUtil
+import dev.micropythontools.settings.MpySettingsService
 import dev.micropythontools.ui.*
 import dev.micropythontools.util.MpyPythonService
 import kotlinx.coroutines.TimeoutCancellationException
@@ -144,7 +142,7 @@ class MpyTransferService(private val project: Project) {
         }.toSet()
     }
 
-    private fun collectExcluded(): Set<VirtualFile> {
+    fun collectExcluded(): Set<VirtualFile> {
         val ideaDir = project.stateStore.directoryStorePath?.let { VfsUtil.findFile(it, false) }
         val excludes = if (ideaDir == null) mutableSetOf() else mutableSetOf(ideaDir)
         project.modules.forEach { module ->
@@ -154,17 +152,6 @@ class MpyTransferService(private val project: Project) {
             }
         }
         return excludes
-    }
-
-    private fun collectSourceRoots(): Set<VirtualFile> {
-        return project.modules.flatMap { module ->
-            module.rootManager.contentEntries
-                .flatMap { entry -> entry.sourceFolders.toList() }
-                .filter { sourceFolder ->
-                    !sourceFolder.isTestSource && sourceFolder.file?.let { !it.leadingDot() } == true
-                }
-                .mapNotNull { it.file }
-        }.toSet()
     }
 
     private fun collectTestRoots(): Set<VirtualFile> {
@@ -261,9 +248,10 @@ class MpyTransferService(private val project: Project) {
         var isProjectUpload = initialIsProjectUpload
         var filesToUpload = toUpload.toMutableList()
         val excludedFolders = collectExcluded()
-        val sourceFolders = collectSourceRoots()
         val testFolders = collectTestRoots()
         val projectDir = project.guessProjectDir()
+        val mpySourceFolders = project.service<MpySettingsService>().state.mpySourcePaths
+            .mapNotNull { StandardFileSystems.local().findFileByPath(it) }
 
         var ftpUploadClient: MpyFTPClient? = null
         var uploadedSuccessfully = false
@@ -286,8 +274,8 @@ class MpyTransferService(private val project: Project) {
                             FileTypeRegistry.getInstance().isFileIgnored(file) ||
                             excludedFolders.any { VfsUtil.isAncestor(it, file, true) } ||
                             (isProjectUpload && testFolders.any { VfsUtil.isAncestor(it, file, true) }) ||
-                            (isProjectUpload && sourceFolders.isNotEmpty() &&
-                                    !sourceFolders.any { VfsUtil.isAncestor(it, file, false) })
+                            (isProjectUpload && mpySourceFolders.isNotEmpty() &&
+                                    !mpySourceFolders.any { VfsUtil.isAncestor(it, file, false) })
 
                     when {
                         shouldSkip -> {
@@ -316,11 +304,11 @@ class MpyTransferService(private val project: Project) {
 
                 uniqueFilesToUpload.forEach { file ->
                     val path = when {
-                        sourceFolders.find { VfsUtil.isAncestor(it, file, false) }?.let { sourceRoot ->
+                        mpySourceFolders.find { VfsUtil.isAncestor(it, file, false) }?.let { sourceRoot ->
                             VfsUtil.getRelativePath(file, sourceRoot) ?: file.name
                         } != null -> VfsUtil.getRelativePath(
                             file,
-                            sourceFolders.find { VfsUtil.isAncestor(it, file, false) }!!
+                            mpySourceFolders.find { VfsUtil.isAncestor(it, file, false) }!!
                         ) ?: file.name
 
                         else -> projectDir?.let { VfsUtil.getRelativePath(file, it) } ?: file.name
@@ -330,9 +318,9 @@ class MpyTransferService(private val project: Project) {
                 }
 
                 val scriptProgressText = if (shouldSynchronize) {
-                    "Syncing and skipping already uploaded files..."
+                    "Synchronizing and skipping already uploaded files..."
                 } else {
-                    "Detecting already uploaded files..."
+                    "Skipping already uploaded files..."
                 }
 
                 reporter.text(scriptProgressText)

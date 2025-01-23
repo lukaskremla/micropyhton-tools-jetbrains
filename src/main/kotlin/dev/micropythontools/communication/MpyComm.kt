@@ -42,9 +42,6 @@ import java.util.*
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.properties.Delegates
 
-/**
- * @author elmot
- */
 private const val BOUNDARY = "*********FSOP************"
 
 internal const val TIMEOUT = 2000L
@@ -79,9 +76,11 @@ fun ExecResponse.extractResponse(): String {
         throw IOException(stderr)
     }
     return this.mapNotNull { it.stdout.nullize(true) }.joinToString("\n")
-
 }
 
+/**
+ * @author elmot
+ */
 open class MpyComm : Disposable, Closeable {
     val stateListeners = mutableListOf<StateListener>()
 
